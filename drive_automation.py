@@ -2,6 +2,8 @@ import os
 import io
 import re
 import json
+import time
+import httplib2
 import pandas as pd
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -26,6 +28,26 @@ def get_drive_service():
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return build('drive', 'v3', credentials=creds)
+
+
+def execute_resumable(request, max_attempts=6):
+    """Run a resumable upload chunk by chunk, retrying on dropped connections."""
+    response = None
+    attempt = 0
+    while response is None:
+        try:
+            status, response = request.next_chunk(num_retries=5)
+            if status:
+                print(f"   Upload progress: {int(status.progress() * 100)}%")
+        except (OSError, httplib2.HttpLib2Error) as e:
+            # OSError covers ssl.SSLError, ConnectionError, socket.timeout
+            attempt += 1
+            if attempt > max_attempts:
+                raise
+            wait = min(2 ** attempt, 30)
+            print(f"⚠️ Connection problem ({type(e).__name__}); retry {attempt}/{max_attempts} in {wait}s...")
+            time.sleep(wait)
+    return response
 
 
 def process_latest_file(service):
@@ -145,7 +167,13 @@ def process_latest_file(service):
             print(f"Would have replaced/trashed existing CSV: {f['name']}")
     else:
         print("\n--- LIVE RUN ---")
-        media = MediaIoBaseUpload(io.BytesIO(csv_bytes), mimetype='text/csv', resumable=True)
+        # 8 MB chunks (must be a multiple of 256 KB) instead of one 68 MB request
+        media = MediaIoBaseUpload(
+            io.BytesIO(csv_bytes),
+            mimetype='text/csv',
+            chunksize=8 * 1024 * 1024,
+            resumable=True
+        )
 
         if old_files:
             # Overwrite the newest existing CSV and rename it
@@ -153,11 +181,11 @@ def process_latest_file(service):
             print(f"Existing file to overwrite: '{keep['name']}' ({keep['id']})")
 
             # Step A: replace the contents
-            service.files().update(
+            execute_resumable(service.files().update(
                 fileId=keep['id'],
                 media_body=media,
                 supportsAllDrives=True
-            ).execute()
+            ))
 
             # Step B: rename in a separate call, and print what Drive returns
             renamed = service.files().update(
@@ -181,16 +209,16 @@ def process_latest_file(service):
                     print(f"⚠️ Could not trash {extra['name']}: {e}")
         else:
             # No existing files, create a brand new one
-            service.files().create(
+            execute_resumable(service.files().create(
                 body={'name': new_name, 'parents': [DEST_FOLDER_ID]},
                 media_body=media,
                 fields='id',
                 supportsAllDrives=True
-            ).execute()
+            ))
             print(f"✅ Successfully uploaded: {new_name}")
 
 
-SCRIPT_VERSION = "v3-rename-separate-call"
+SCRIPT_VERSION = "v4-chunked-upload-retry"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
