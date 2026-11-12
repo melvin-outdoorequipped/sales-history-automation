@@ -150,13 +150,23 @@ def process_latest_file(service):
         if old_files:
             # Overwrite the newest existing CSV and rename it
             keep = old_files[0]
+            print(f"Existing file to overwrite: '{keep['name']}' ({keep['id']})")
+
+            # Step A: replace the contents
             service.files().update(
                 fileId=keep['id'],
-                body={'name': new_name},
                 media_body=media,
                 supportsAllDrives=True
             ).execute()
-            print(f"✅ Updated existing file in place: {new_name}")
+
+            # Step B: rename in a separate call, and print what Drive returns
+            renamed = service.files().update(
+                fileId=keep['id'],
+                body={'name': new_name},
+                fields='id, name',
+                supportsAllDrives=True
+            ).execute()
+            print(f"✅ Updated existing file in place. Drive now reports name: '{renamed['name']}'")
 
             # Trash any extra leftover CSVs
             for extra in old_files[1:]:
@@ -180,6 +190,9 @@ def process_latest_file(service):
             print(f"✅ Successfully uploaded: {new_name}")
 
 
+SCRIPT_VERSION = "v3-rename-separate-call"
+
 if __name__ == "__main__":
+    print(f"Script version: {SCRIPT_VERSION}")
     service = get_drive_service()
     process_latest_file(service)
