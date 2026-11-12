@@ -15,11 +15,9 @@ DRY_RUN = False
 
 def get_drive_service():
     print("Authenticating with Google Drive...")
-    
-    # --- GITHUB SECRET AUTHENTICATION ---
     creds_json = os.environ.get("GDRIVE_CREDENTIALS")
     if not creds_json:
-        raise ValueError("❌ Missing GDRIVE_CREDENTIALS environment variable. If running locally, set it or use the local file version.")
+        raise ValueError("❌ Missing GDRIVE_CREDENTIALS environment variable.")
     
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
@@ -85,8 +83,10 @@ def process_latest_file(service):
     # 4. Filter Columns
     required_columns = [
         "Date", "BRAND", "amazon-order-id", "fulfillment-channel",
-        "sku", "asin", "quantity", "item-price", "Fulfillment"
+        "sku", "asin", "quantity", "item-price", "Fulfillment", "Extracted Text"
     ]
+
+    text_variations = ["extracted text", "item-name", "item name", "product-title", "product title", "title"]
 
     actual_cols = {str(c).strip().lower(): c for c in df.columns}
     filtered_df = pd.DataFrame()
@@ -96,6 +96,16 @@ def process_latest_file(service):
             filtered_df[req_col] = df[req_col]
         elif req_col.lower() in actual_cols:
             filtered_df[req_col] = df[actual_cols[req_col.lower()]]
+        elif req_col == "Extracted Text":
+            found = False
+            for var in text_variations:
+                if var in actual_cols:
+                    filtered_df[req_col] = df[actual_cols[var]]
+                    found = True
+                    break
+            if not found:
+                print(f"⚠️ Warning: Could not find Extracted Text or Title column. Creating empty column.")
+                filtered_df[req_col] = ""
         else:
             print(f"⚠️ Warning: Column '{req_col}' not found. Creating empty column.")
             filtered_df[req_col] = ""
@@ -106,7 +116,10 @@ def process_latest_file(service):
     csv_buffer = io.StringIO()
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
-    new_name = latest_file['name'].replace('.xlsb', '.csv')
+    
+    # ---> THIS IS THE LINE THAT CHANGES THE FILENAME <---
+    new_name = latest_file['name'].replace('.xlsb', ' - Extracted.csv')
+    print(f"📁 New file name will be: {new_name}")
 
     # 6. Check Destination Folder
     print("Checking Destination Folder for existing CSVs...")
@@ -140,7 +153,7 @@ def process_latest_file(service):
             ).execute()
             print(f"✅ Updated existing file in place: {new_name}")
 
-            # Try to trash any extra leftover CSVs; skip quietly if not permitted
+            # Try to trash any extra leftover CSVs
             for extra in old_files[1:]:
                 try:
                     service.files().update(
