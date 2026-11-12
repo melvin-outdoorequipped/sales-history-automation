@@ -15,6 +15,8 @@ DRY_RUN = False
 
 def get_drive_service():
     print("Authenticating with Google Drive...")
+    
+    # GitHub Secret Authentication
     creds_json = os.environ.get("GDRIVE_CREDENTIALS")
     if not creds_json:
         raise ValueError("❌ Missing GDRIVE_CREDENTIALS environment variable.")
@@ -117,9 +119,9 @@ def process_latest_file(service):
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
     
-    # ---> THIS IS THE LINE THAT CHANGES THE FILENAME <---
+    # Append "- Extracted" to the filename
     new_name = latest_file['name'].replace('.xlsb', ' - Extracted.csv')
-    print(f"📁 New file name will be: {new_name}")
+    print(f"📁 Target file name: {new_name}")
 
     # 6. Check Destination Folder
     print("Checking Destination Folder for existing CSVs...")
@@ -143,17 +145,21 @@ def process_latest_file(service):
         media = MediaIoBaseUpload(io.BytesIO(csv_bytes), mimetype='text/csv', resumable=True)
 
         if old_files:
-            # Overwrite the newest existing CSV (content + name).
+            # Overwrite the newest existing CSV and update its name
             keep = old_files[0]
+            
+            # We pass the new name inside body to force a rename
+            file_metadata = {'name': new_name} 
+            
             service.files().update(
                 fileId=keep['id'],
-                body={'name': new_name},
+                body=file_metadata, 
                 media_body=media,
                 supportsAllDrives=True
             ).execute()
             print(f"✅ Updated existing file in place: {new_name}")
 
-            # Try to trash any extra leftover CSVs
+            # Trash any extra leftover CSVs
             for extra in old_files[1:]:
                 try:
                     service.files().update(
@@ -165,6 +171,7 @@ def process_latest_file(service):
                 except Exception as e:
                     print(f"⚠️ Could not trash {extra['name']}: {e}")
         else:
+            # No existing files, create a brand new one
             service.files().create(
                 body={'name': new_name, 'parents': [DEST_FOLDER_ID]},
                 media_body=media,
