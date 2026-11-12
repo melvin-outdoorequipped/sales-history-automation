@@ -1,0 +1,4 @@
+pandas
+python-calamine
+google-api-python-client
+google-auth
