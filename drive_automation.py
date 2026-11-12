@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import json
 import pandas as pd
 from google.oauth2 import service_account
@@ -13,17 +14,19 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 
 DRY_RUN = False
 
+
 def get_drive_service():
     print("Authenticating with Google Drive...")
-    
+
     # GitHub Secret Authentication
     creds_json = os.environ.get("GDRIVE_CREDENTIALS")
     if not creds_json:
         raise ValueError("❌ Missing GDRIVE_CREDENTIALS environment variable.")
-    
+
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return build('drive', 'v3', credentials=creds)
+
 
 def process_latest_file(service):
     print(f"Checking Source Folder... (Dry Run: {DRY_RUN})")
@@ -106,7 +109,7 @@ def process_latest_file(service):
                     found = True
                     break
             if not found:
-                print(f"⚠️ Warning: Could not find Extracted Text or Title column. Creating empty column.")
+                print("⚠️ Warning: Could not find Extracted Text or Title column. Creating empty column.")
                 filtered_df[req_col] = ""
         else:
             print(f"⚠️ Warning: Column '{req_col}' not found. Creating empty column.")
@@ -118,9 +121,9 @@ def process_latest_file(service):
     csv_buffer = io.StringIO()
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
-    
-    # Append "- Extracted" to the filename
-    new_name = latest_file['name'].replace('.xlsb', ' - Extracted.csv')
+
+    # Replace the .xlsb extension (case-insensitive) with " - Extracted.csv"
+    new_name = re.sub(r'\.xlsb$', ' - Extracted.csv', latest_file['name'], flags=re.IGNORECASE)
     print(f"📁 Target file name: {new_name}")
 
     # 6. Check Destination Folder
@@ -145,15 +148,11 @@ def process_latest_file(service):
         media = MediaIoBaseUpload(io.BytesIO(csv_bytes), mimetype='text/csv', resumable=True)
 
         if old_files:
-            # Overwrite the newest existing CSV and update its name
+            # Overwrite the newest existing CSV and rename it
             keep = old_files[0]
-            
-            # We pass the new name inside body to force a rename
-            file_metadata = {'name': new_name} 
-            
             service.files().update(
                 fileId=keep['id'],
-                body=file_metadata, 
+                body={'name': new_name},
                 media_body=media,
                 supportsAllDrives=True
             ).execute()
@@ -179,6 +178,7 @@ def process_latest_file(service):
                 supportsAllDrives=True
             ).execute()
             print(f"✅ Successfully uploaded: {new_name}")
+
 
 if __name__ == "__main__":
     service = get_drive_service()
