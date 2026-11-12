@@ -110,10 +110,8 @@ def process_latest_file(service):
     # 4. Filter Columns
     required_columns = [
         "Date", "BRAND", "amazon-order-id", "fulfillment-channel",
-        "sku", "asin", "quantity", "item-price", "Fulfillment", "Extracted Text"
+        "sku", "asin", "quantity", "item-price", "Fulfillment"
     ]
-
-    text_variations = ["extracted text", "item-name", "item name", "product-title", "product title", "title"]
 
     actual_cols = {str(c).strip().lower(): c for c in df.columns}
     filtered_df = pd.DataFrame()
@@ -123,16 +121,6 @@ def process_latest_file(service):
             filtered_df[req_col] = df[req_col]
         elif req_col.lower() in actual_cols:
             filtered_df[req_col] = df[actual_cols[req_col.lower()]]
-        elif req_col == "Extracted Text":
-            found = False
-            for var in text_variations:
-                if var in actual_cols:
-                    filtered_df[req_col] = df[actual_cols[var]]
-                    found = True
-                    break
-            if not found:
-                print("⚠️ Warning: Could not find Extracted Text or Title column. Creating empty column.")
-                filtered_df[req_col] = ""
         else:
             print(f"⚠️ Warning: Column '{req_col}' not found. Creating empty column.")
             filtered_df[req_col] = ""
@@ -218,7 +206,7 @@ def process_latest_file(service):
             print(f"✅ Successfully uploaded: {new_name}")
 
 
-SCRIPT_VERSION = "v4-chunked-upload-retry"
+SCRIPT_VERSION = "v5-no-extracted-column"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
