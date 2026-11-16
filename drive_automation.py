@@ -109,9 +109,9 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     old_files = dest_results.get('files', [])
 
     if DRY_RUN:
-        print(f"[DRY RUN] Would have CREATED a brand new file: {new_name} (Created by Melvin)")
+        print(f"[DRY RUN] Would have CREATED a brand new file: {new_name}")
         for f in old_files:
-            print(f"[DRY RUN] Would have MOVED TO TRASH old file: {f['name']}")
+            print(f"[DRY RUN] Would have DELETED old file: {f['name']}")
         return
 
     media = MediaIoBaseUpload(
@@ -122,7 +122,6 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     )
 
     # 2. Upload the brand new file. 
-    # Because this is a CREATE request, Google Drive stamps Melvin as the Creator.
     print(f"Uploading NEW file: '{new_name}'...")
     execute_resumable(service.files().create(
         body={'name': new_name, 'parents': [dest_folder_id]},
@@ -132,91 +131,18 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     ))
     print(f"✅ Successfully uploaded: {new_name}")
 
-    # 3. Move ALL old files to the Trash. 
-    # This ensures ONLY the new file remains in the folder.
+    # 3. PERMANENTLY DELETE all old files to guarantee only one remains
     if old_files:
         for old_file in old_files:
             try:
-                service.files().update(
+                # We use .delete() instead of .update(trashed=True) to force it out of the folder
+                service.files().delete(
                     fileId=old_file['id'],
-                    body={'trashed': True},
                     supportsAllDrives=True
                 ).execute()
-                print(f"🗑️ Moved old file to Trash: {old_file['name']}")
+                print(f"🗑️ Permanently deleted old file: {old_file['name']}")
             except Exception as e:
-                print(f"⚠️ Could not trash {old_file['name']}: {e}")
-
-
-# ==========================================
-# AUTOMATION 1: AMAZON ORDER DATA
-# ==========================================
-def process_amazon_automation(service):
-    print("\n" + "="*50)
-    print("🛒 RUNNING AUTOMATION 1: AMAZON ORDER DATA")
-    print("="*50)
-    
-    latest_file = get_latest_file(service, AMAZON_SOURCE_ID, is_pricing=False)
-    if not latest_file:
-        print("❌ No .xlsb files found in Amazon Source folder.")
-        return
-
-    file_id = latest_file['id']
-    print(f"✅ Found latest file: {latest_file['name']}")
-
-    print("Downloading file...")
-    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while done is False:
-        status, done = downloader.next_chunk()
-    fh.seek(0)
-
-    print("Parsing Excel data...")
-    try:
-        raw_df = pd.read_excel(fh, sheet_name=0, engine='calamine', header=None, nrows=20)
-        header_row_idx = None
-        for i in range(len(raw_df)):
-            row_vals = [str(val).strip().lower() for val in raw_df.iloc[i].values]
-            if "date" in row_vals and ("brand" in row_vals or "sku" in row_vals):
-                header_row_idx = i
-                break
-
-        if header_row_idx is None:
-            header_row_idx = 0
-
-        fh.seek(0)
-        df = pd.read_excel(fh, sheet_name=0, engine='calamine', header=header_row_idx)
-        print(f"✅ Found headers on row {header_row_idx + 1}.")
-    except Exception as e:
-        print(f"❌ Error reading Excel: {e}")
-        return
-
-    required_columns = [
-        "Date", "BRAND", "amazon-order-id", "fulfillment-channel",
-        "sku", "asin", "quantity", "item-price", "Fulfillment"
-    ]
-    actual_cols = {str(c).strip().lower(): c for c in df.columns}
-    filtered_df = pd.DataFrame()
-
-    for req_col in required_columns:
-        if req_col in df.columns:
-            filtered_df[req_col] = df[req_col]
-        elif req_col.lower() in actual_cols:
-            filtered_df[req_col] = df[actual_cols[req_col.lower()]]
-        else:
-            filtered_df[req_col] = ""
-
-    print(f"✅ Filtered data! Shape: {filtered_df.shape[0]} rows, {filtered_df.shape[1]} columns.")
-
-    csv_buffer = io.StringIO()
-    filtered_df.to_csv(csv_buffer, index=False)
-    csv_bytes = csv_buffer.getvalue().encode('utf-8')
-
-    new_name = re.sub(r'\.xlsb$', ' - Extracted.csv', latest_file['name'], flags=re.IGNORECASE)
-    print(f"📁 Target file name: {new_name}")
-
-    handle_upload(service, AMAZON_DEST_ID, new_name, csv_bytes)
+                print(f"⚠️ Could not delete {old_file['name']}: {e}")
 
 
 # ==========================================
