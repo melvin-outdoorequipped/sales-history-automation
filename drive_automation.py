@@ -111,7 +111,7 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     if DRY_RUN:
         print(f"[DRY RUN] Would have CREATED a brand new file: {new_name}")
         for f in old_files:
-            print(f"[DRY RUN] Would have DELETED old file: {f['name']}")
+            print(f"[DRY RUN] Would have TRASHED old file: {f['name']}")
         return
 
     media = MediaIoBaseUpload(
@@ -131,18 +131,18 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     ))
     print(f"✅ Successfully uploaded: {new_name}")
 
-    # 3. PERMANENTLY DELETE all old files to guarantee only one remains
+    # 3. Move ALL old files to TRASH (Safest way in Shared Drives)
     if old_files:
         for old_file in old_files:
             try:
-                # We use .delete() instead of .update(trashed=True) to force it out of the folder
-                service.files().delete(
+                service.files().update(
                     fileId=old_file['id'],
+                    body={'trashed': True},
                     supportsAllDrives=True
                 ).execute()
-                print(f"🗑️ Permanently deleted old file: {old_file['name']}")
+                print(f"🗑️ Moved to Trash: {old_file['name']}")
             except Exception as e:
-                print(f"⚠️ Could not delete {old_file['name']}: {e}")
+                print(f"⚠️ FAILED to trash {old_file['name']}: {e}")
 
 
 # ==========================================
@@ -296,7 +296,7 @@ def process_pricing_automation(service):
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-SCRIPT_VERSION = "v13-final-clean"
+SCRIPT_VERSION = "v14-final-clean-trash"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
