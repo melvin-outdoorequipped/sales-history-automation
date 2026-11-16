@@ -146,6 +146,78 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
 
 
 # ==========================================
+# AUTOMATION 1: AMAZON ORDER DATA
+# ==========================================
+def process_amazon_automation(service):
+    print("\n" + "="*50)
+    print("🛒 RUNNING AUTOMATION 1: AMAZON ORDER DATA")
+    print("="*50)
+    
+    latest_file = get_latest_file(service, AMAZON_SOURCE_ID, is_pricing=False)
+    if not latest_file:
+        print("❌ No .xlsb files found in Amazon Source folder.")
+        return
+
+    file_id = latest_file['id']
+    print(f"✅ Found latest file: {latest_file['name']}")
+
+    print("Downloading file...")
+    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while done is False:
+        status, done = downloader.next_chunk()
+    fh.seek(0)
+
+    print("Parsing Excel data...")
+    try:
+        raw_df = pd.read_excel(fh, sheet_name=0, engine='calamine', header=None, nrows=20)
+        header_row_idx = None
+        for i in range(len(raw_df)):
+            row_vals = [str(val).strip().lower() for val in raw_df.iloc[i].values]
+            if "date" in row_vals and ("brand" in row_vals or "sku" in row_vals):
+                header_row_idx = i
+                break
+
+        if header_row_idx is None:
+            header_row_idx = 0
+
+        fh.seek(0)
+        df = pd.read_excel(fh, sheet_name=0, engine='calamine', header=header_row_idx)
+        print(f"✅ Found headers on row {header_row_idx + 1}.")
+    except Exception as e:
+        print(f"❌ Error reading Excel: {e}")
+        return
+
+    required_columns = [
+        "Date", "BRAND", "amazon-order-id", "fulfillment-channel",
+        "sku", "asin", "quantity", "item-price", "Fulfillment"
+    ]
+    actual_cols = {str(c).strip().lower(): c for c in df.columns}
+    filtered_df = pd.DataFrame()
+
+    for req_col in required_columns:
+        if req_col in df.columns:
+            filtered_df[req_col] = df[req_col]
+        elif req_col.lower() in actual_cols:
+            filtered_df[req_col] = df[actual_cols[req_col.lower()]]
+        else:
+            filtered_df[req_col] = ""
+
+    print(f"✅ Filtered data! Shape: {filtered_df.shape[0]} rows, {filtered_df.shape[1]} columns.")
+
+    csv_buffer = io.StringIO()
+    filtered_df.to_csv(csv_buffer, index=False)
+    csv_bytes = csv_buffer.getvalue().encode('utf-8')
+
+    new_name = re.sub(r'\.xlsb$', ' - Extracted.csv', latest_file['name'], flags=re.IGNORECASE)
+    print(f"📁 Target file name: {new_name}")
+
+    handle_upload(service, AMAZON_DEST_ID, new_name, csv_bytes)
+
+
+# ==========================================
 # AUTOMATION 2: PRICING TEAM DATA
 # ==========================================
 def process_pricing_automation(service):
@@ -224,7 +296,7 @@ def process_pricing_automation(service):
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-SCRIPT_VERSION = "v12-final-github"
+SCRIPT_VERSION = "v13-final-clean"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
