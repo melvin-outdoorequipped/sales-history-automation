@@ -7,7 +7,6 @@ import httplib2
 import pandas as pd
 import base64
 import pickle
-from datetime import datetime
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -128,6 +127,7 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     ))
     print(f"✅ Successfully uploaded: {new_name}")
 
+    # 🧹 CLEANUP: Trash all old files
     if old_files:
         for old_file in old_files:
             try:
@@ -207,7 +207,7 @@ def process_amazon_automation(service):
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
 
-    # AMAZON NAMING: Relys on the source file name
+    # AMAZON NAMING
     new_name = re.sub(r'\.xlsb$', ' - Extracted.csv', latest_file['name'], flags=re.IGNORECASE)
     print(f"📁 Target file name: {new_name}")
 
@@ -279,17 +279,13 @@ def process_pricing_automation(service):
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
 
-    # 🟢 PRICING NAMING: Relies on the CURRENT TIME the script is running
-    now = datetime.now()
-    # Format date as MM.DD.YYYY
-    date_str = now.strftime("%m.%d.%Y")
-    # Format time as "5 PM" or "12 AM"
-    hour_12 = now.hour % 12
-    hour_12 = 12 if hour_12 == 0 else hour_12
-    ampm = "AM" if now.hour < 12 else "PM"
-    time_str = f"{hour_12} {ampm}"
-
-    new_name = f"Appeagle_Consolidated_Export {date_str} - {time_str} PHT_Trimmed.csv"
+    # 🟢 PRICING NAMING: Uses exact source file name + _Trimmed.csv
+    if mime_type == 'application/vnd.google-apps.spreadsheet':
+        base_name = original_name
+    else:
+        base_name = re.sub(r'\.(xlsb|xlsx)$', '', original_name, flags=re.IGNORECASE)
+        
+    new_name = f"{base_name}_Trimmed.csv"
     print(f"📁 Target file name: {new_name}")
 
     handle_upload(service, PRICING_DEST_ID, new_name, csv_bytes)
@@ -298,7 +294,7 @@ def process_pricing_automation(service):
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-SCRIPT_VERSION = "v16-time-based-pricing"
+SCRIPT_VERSION = "v18-source-name-pricing"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
