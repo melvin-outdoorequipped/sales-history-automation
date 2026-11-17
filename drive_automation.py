@@ -74,15 +74,20 @@ def execute_resumable(request, max_attempts=6):
 
 
 def get_latest_file(service, folder_id, is_pricing=False):
+    """
+    Fetches the absolute newest file in the given folder based on the time it was last modified.
+    """
     if is_pricing:
+        # Looks for Excel files OR Google Sheets
         query = f"'{folder_id}' in parents and (name contains '.xlsb' or name contains '.xlsx' or mimeType='application/vnd.google-apps.spreadsheet') and trashed=false"
     else:
+        # Looks for Amazon .xlsb files
         query = f"'{folder_id}' in parents and name contains '.xlsb' and trashed=false"
         
     results = service.files().list(
         q=query,
-        orderBy="modifiedTime desc",
-        pageSize=1,
+        orderBy="modifiedTime desc", # Sort by newest first
+        pageSize=1,                  # Only grab the top result
         fields="files(id, name, modifiedTime, mimeType)",
         supportsAllDrives=True,
         includeItemsFromAllDrives=True
@@ -95,7 +100,7 @@ def get_latest_file(service, folder_id, is_pricing=False):
 def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     print("Checking Destination Folder for existing files...")
     
-    # Catch absolutely everything in the folder
+    # Catch absolutely everything in the destination folder
     dest_results = service.files().list(
         q=f"'{dest_folder_id}' in parents and trashed=false",
         orderBy="modifiedTime desc",
@@ -155,7 +160,7 @@ def process_amazon_automation(service):
         return
 
     file_id = latest_file['id']
-    print(f"✅ Found latest file: {latest_file['name']}")
+    print(f"✅ Found newest file in Sales History: {latest_file['name']}")
 
     print("Downloading file...")
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
@@ -224,13 +229,16 @@ def process_pricing_automation(service):
     
     latest_file = get_latest_file(service, PRICING_SOURCE_ID, is_pricing=True)
     if not latest_file:
-        print("❌ No spreadsheet files found in Pricing Source folder.")
+        print("❌ No spreadsheet files found in Pricing Source folder (AE Export).")
         return
 
     file_id = latest_file['id']
     original_name = latest_file['name']
     mime_type = latest_file['mimeType']
-    print(f"✅ Found latest file: {original_name}")
+    
+    # 🟢 Print exactly what file it found so you can confirm it sees the newest one
+    print(f"✅ Found newest file in AE Export: {original_name}")
+    print(f"   (Uploaded/Modified: {latest_file['modifiedTime']})")
 
     print("Downloading file...")
     fh = io.BytesIO()
@@ -294,13 +302,16 @@ def process_pricing_automation(service):
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-SCRIPT_VERSION = "v18-source-name-pricing"
+SCRIPT_VERSION = "v19-independent-checks"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
     service = get_drive_service()
     
+    # Process Amazon completely
     process_amazon_automation(service)
+    
+    # Process Pricing completely
     process_pricing_automation(service)
     
     print("\n✅ All automations finished successfully!")
