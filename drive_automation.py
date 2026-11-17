@@ -26,7 +26,6 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 # 🛑 SET TO FALSE FOR LIVE UPLOADS
 DRY_RUN = False 
 
-
 def get_drive_service():
     print("Authenticating with Google Drive via OAuth...")
     creds = None
@@ -54,7 +53,6 @@ def get_drive_service():
 
     return build('drive', 'v3', credentials=creds)
 
-
 def execute_resumable(request, max_attempts=6):
     response = None
     attempt = 0
@@ -72,22 +70,25 @@ def execute_resumable(request, max_attempts=6):
             time.sleep(wait)
     return response
 
-
-def get_latest_file(service, folder_id, is_pricing=False):
+def get_latest_file(service, folder_id, is_pricing=False, specific_file_name=None):
     """
-    Fetches the absolute newest file in the given folder based on the time it was last modified.
+    If specific_file_name is provided (by Apps Script), it fetches exactly that file.
+    Otherwise, it fetches the absolute newest file in the given folder.
     """
     if is_pricing:
-        # Looks for Excel files OR Google Sheets
         query = f"'{folder_id}' in parents and (name contains '.xlsb' or name contains '.xlsx' or mimeType='application/vnd.google-apps.spreadsheet') and trashed=false"
     else:
-        # Looks for Amazon .xlsb files
         query = f"'{folder_id}' in parents and name contains '.xlsb' and trashed=false"
+        
+    # If Apps Script triggered this with a specific file, look for it exactly
+    if specific_file_name:
+        query += f" and name = '{specific_file_name}'"
+        print(f"🔍 Looking for specific file: {specific_file_name}")
         
     results = service.files().list(
         q=query,
-        orderBy="modifiedTime desc", # Sort by newest first
-        pageSize=1,                  # Only grab the top result
+        orderBy="modifiedTime desc",
+        pageSize=1,
         fields="files(id, name, modifiedTime, mimeType)",
         supportsAllDrives=True,
         includeItemsFromAllDrives=True
@@ -96,11 +97,9 @@ def get_latest_file(service, folder_id, is_pricing=False):
     files = results.get('files', [])
     return files[0] if files else None
 
-
 def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     print("Checking Destination Folder for existing files...")
     
-    # Catch absolutely everything in the destination folder
     dest_results = service.files().list(
         q=f"'{dest_folder_id}' in parents and trashed=false",
         orderBy="modifiedTime desc",
@@ -149,18 +148,18 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
 # ==========================================
 # AUTOMATION 1: AMAZON ORDER DATA
 # ==========================================
-def process_amazon_automation(service):
+def process_amazon_automation(service, specific_file_name=None):
     print("\n" + "="*50)
     print("🛒 RUNNING AUTOMATION 1: AMAZON ORDER DATA")
     print("="*50)
     
-    latest_file = get_latest_file(service, AMAZON_SOURCE_ID, is_pricing=False)
+    latest_file = get_latest_file(service, AMAZON_SOURCE_ID, is_pricing=False, specific_file_name=specific_file_name)
     if not latest_file:
-        print("❌ No .xlsb files found in Amazon Source folder.")
+        print("❌ No matching .xlsb files found in Amazon Source folder.")
         return
 
     file_id = latest_file['id']
-    print(f"✅ Found newest file in Sales History: {latest_file['name']}")
+    print(f"✅ Processing file: {latest_file['name']}")
 
     print("Downloading file...")
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
@@ -212,7 +211,6 @@ def process_amazon_automation(service):
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
 
-    # AMAZON NAMING
     new_name = re.sub(r'\.xlsb$', ' - Extracted.csv', latest_file['name'], flags=re.IGNORECASE)
     print(f"📁 Target file name: {new_name}")
 
@@ -222,22 +220,21 @@ def process_amazon_automation(service):
 # ==========================================
 # AUTOMATION 2: PRICING TEAM DATA
 # ==========================================
-def process_pricing_automation(service):
+def process_pricing_automation(service, specific_file_name=None):
     print("\n" + "="*50)
     print("🏷️ RUNNING AUTOMATION 2: PRICING TEAM DATA")
     print("="*50)
     
-    latest_file = get_latest_file(service, PRICING_SOURCE_ID, is_pricing=True)
+    latest_file = get_latest_file(service, PRICING_SOURCE_ID, is_pricing=True, specific_file_name=specific_file_name)
     if not latest_file:
-        print("❌ No spreadsheet files found in Pricing Source folder (AE Export).")
+        print("❌ No matching spreadsheet files found in Pricing Source folder (AE Export).")
         return
 
     file_id = latest_file['id']
     original_name = latest_file['name']
     mime_type = latest_file['mimeType']
     
-    # 🟢 Print exactly what file it found so you can confirm it sees the newest one
-    print(f"✅ Found newest file in AE Export: {original_name}")
+    print(f"✅ Processing file: {original_name}")
     print(f"   (Uploaded/Modified: {latest_file['modifiedTime']})")
 
     print("Downloading file...")
@@ -287,7 +284,6 @@ def process_pricing_automation(service):
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
 
-    # 🟢 PRICING NAMING: Uses exact source file name + _Trimmed.csv
     if mime_type == 'application/vnd.google-apps.spreadsheet':
         base_name = original_name
     else:
@@ -302,16 +298,27 @@ def process_pricing_automation(service):
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-SCRIPT_VERSION = "v19-independent-checks"
+SCRIPT_VERSION = "v20-targeted-execution"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
     service = get_drive_service()
     
-    # Process Amazon completely
-    process_amazon_automation(service)
+    # 1. Check if GitHub sent us a specific file to process
+    target_file = os.environ.get("INPUT_FILE_NAME")
+    target_folder_id = os.environ.get("INPUT_FOLDER_ID")
     
-    # Process Pricing completely
-    process_pricing_automation(service)
-    
+    if target_file and target_folder_id:
+        print(f"🚀 Triggered by Apps Script for specific file: {target_file}")
+        if target_folder_id == AMAZON_SOURCE_ID:
+            process_amazon_automation(service, specific_file_name=target_file)
+        elif target_folder_id == PRICING_SOURCE_ID:
+            process_pricing_automation(service, specific_file_name=target_file)
+        else:
+            print(f"⚠️ Unknown folder ID received: {target_folder_id}")
+    else:
+        print("⏰ Triggered by schedule (or manual run without inputs). Running default latest-file checks...")
+        process_amazon_automation(service)
+        process_pricing_automation(service)
+        
     print("\n✅ All automations finished successfully!")
