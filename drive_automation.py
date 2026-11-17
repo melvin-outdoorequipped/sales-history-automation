@@ -7,8 +7,8 @@ import httplib2
 import pandas as pd
 import base64
 import pickle
+from datetime import datetime
 from google.auth.transport.requests import Request
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
@@ -32,7 +32,6 @@ def get_drive_service():
     print("Authenticating with Google Drive via OAuth...")
     creds = None
     
-    # 1. Check for GitHub Secret (Base64 encoded pickle)
     token_b64 = os.environ.get("GOOGLE_TOKEN_PICKLE_B64")
     
     if token_b64:
@@ -43,7 +42,6 @@ def get_drive_service():
                 print("Token expired, refreshing...")
                 creds.refresh(Request())
     else:
-        # 2. Local fallback: Use the token.pickle file
         if os.path.exists('token.pickle'):
             print("Using local token.pickle file...")
             with open('token.pickle', 'rb') as token:
@@ -96,11 +94,11 @@ def get_latest_file(service, folder_id, is_pricing=False):
 
 
 def handle_upload(service, dest_folder_id, new_name, csv_bytes):
-    print("Checking Destination Folder for existing CSVs...")
+    print("Checking Destination Folder for existing files...")
     
-    # 1. Get ALL csv files currently in the destination folder
+    # Catch absolutely everything in the folder
     dest_results = service.files().list(
-        q=f"'{dest_folder_id}' in parents and mimeType='text/csv' and trashed=false",
+        q=f"'{dest_folder_id}' in parents and trashed=false",
         orderBy="modifiedTime desc",
         fields="files(id, name)",
         supportsAllDrives=True,
@@ -121,7 +119,6 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
         resumable=True
     )
 
-    # 2. Upload the brand new file. 
     print(f"Uploading NEW file: '{new_name}'...")
     execute_resumable(service.files().create(
         body={'name': new_name, 'parents': [dest_folder_id]},
@@ -131,7 +128,6 @@ def handle_upload(service, dest_folder_id, new_name, csv_bytes):
     ))
     print(f"✅ Successfully uploaded: {new_name}")
 
-    # 3. Move ALL old files to TRASH (Safest way in Shared Drives)
     if old_files:
         for old_file in old_files:
             try:
@@ -211,6 +207,7 @@ def process_amazon_automation(service):
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
 
+    # AMAZON NAMING: Relys on the source file name
     new_name = re.sub(r'\.xlsb$', ' - Extracted.csv', latest_file['name'], flags=re.IGNORECASE)
     print(f"📁 Target file name: {new_name}")
 
@@ -282,12 +279,17 @@ def process_pricing_automation(service):
     filtered_df.to_csv(csv_buffer, index=False)
     csv_bytes = csv_buffer.getvalue().encode('utf-8')
 
-    if mime_type == 'application/vnd.google-apps.spreadsheet':
-        base_name = original_name
-    else:
-        base_name = re.sub(r'\.(xlsb|xlsx)$', '', original_name, flags=re.IGNORECASE)
-        
-    new_name = f"{base_name}_Trimmed.csv"
+    # 🟢 PRICING NAMING: Relies on the CURRENT TIME the script is running
+    now = datetime.now()
+    # Format date as MM.DD.YYYY
+    date_str = now.strftime("%m.%d.%Y")
+    # Format time as "5 PM" or "12 AM"
+    hour_12 = now.hour % 12
+    hour_12 = 12 if hour_12 == 0 else hour_12
+    ampm = "AM" if now.hour < 12 else "PM"
+    time_str = f"{hour_12} {ampm}"
+
+    new_name = f"Appeagle_Consolidated_Export {date_str} - {time_str} PHT_Trimmed.csv"
     print(f"📁 Target file name: {new_name}")
 
     handle_upload(service, PRICING_DEST_ID, new_name, csv_bytes)
@@ -296,7 +298,7 @@ def process_pricing_automation(service):
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-SCRIPT_VERSION = "v14-final-clean-trash"
+SCRIPT_VERSION = "v16-time-based-pricing"
 
 if __name__ == "__main__":
     print(f"Script version: {SCRIPT_VERSION}")
